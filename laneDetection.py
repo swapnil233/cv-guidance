@@ -8,13 +8,16 @@ def canny(img):
         cap.release()
         cv2.destroyAllWindows()
         exit()
+
     # Convert from colored images to gray. Open cb uses bgr rather than rgb
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     kernel = 5
+
     # Blurring to reduce noise level (any image less than 5x5 will be erased)
     blur = cv2.GaussianBlur(gray, (kernel, kernel), 0)
+
     # Done on gray image
-    canny = cv2.Canny(gray, 50, 150)
+    canny = cv2.Canny(blur, 50, 150)
     return canny
 
 
@@ -22,7 +25,8 @@ def region_of_interest(canny):
     # Obtains height of canny array
     height = canny.shape[0]
     width = canny.shape[1]
-    # WAnt to remove everything excep for the road
+
+    # Want to remove everything excep for the road
     mask = np.zeros_like(canny)
     triangle = np.array(
         [
@@ -34,6 +38,7 @@ def region_of_interest(canny):
         ],
         np.int32,
     )
+
     # Masking out all except for the triangle
     cv2.fillPoly(mask, triangle, 255)
     masked_image = cv2.bitwise_and(canny, mask)
@@ -54,18 +59,25 @@ def display_lines(img, lines):
     line_image = np.zeros_like(img)
     if lines is not None:
         for line in lines:
-            for x1, y1, x2, y2 in line:
-                cv2.line(line_image, (x1, y1), (x2, y2), (0, 0, 255), 10)
+            if line is not None:  # Check if the line is not None
+                for x1, y1, x2, y2 in line:
+                    # Ensure x1, y1, x2, y2 are integers
+                    x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+                    cv2.line(line_image, (x1, y1), (x2, y2), (0, 0, 255), 10)
     return line_image
 
 
 def make_points(image, line):
-    slope, intercept = line
-    y1 = int(image.shape[0])
-    y2 = int(y1 * 3.0 / 5)
-    x1 = int((y1 - intercept) / slope)
-    x2 = int((y2 - intercept) / slope)
-    return [[x1, y1, x2, y2]]
+    try:
+        slope, intercept = line
+        y1 = int(image.shape[0])
+        y2 = int(y1 * 3.0 / 5)
+        x1 = int((y1 - intercept) / slope)
+        x2 = int((y2 - intercept) / slope)
+        return [[x1, y1, x2, y2]]
+    except Exception as e:
+        print(f"Error in make_points: {e}")
+        return None  # Return None if there's an error
 
 
 # Goes through each line and tries to identify which line is important and which is not
@@ -97,7 +109,7 @@ def average_slope_intercept(image, lines):
     return averaged_lines
 
 
-cap = cv2.VideoCapture("test2.mp4")
+cap = cv2.VideoCapture("test1.mp4")
 while cap.isOpened():
     _, frame = cap.read()
     canny_image = canny(frame)
