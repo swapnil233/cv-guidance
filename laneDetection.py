@@ -109,6 +109,26 @@ def average_slope_intercept(image, lines):
     return averaged_lines
 
 
+def draw_center_line(img, left_line, right_line):
+    """
+    Draws the center line between the left and right lanes.
+    """
+    if left_line is not None and right_line is not None:
+        # Calculate the midpoint at the bottom of the image (where the car is)
+        bottom_midpoint = ((left_line[0][0] + right_line[0][0]) // 2, img.shape[0])
+
+        # Calculate the midpoint further up the road
+        top_midpoint = (
+            (left_line[0][2] + right_line[0][2]) // 2,
+            (left_line[0][3] + right_line[0][3]) // 2,
+        )
+
+        # Draw the center line
+        cv2.line(img, bottom_midpoint, top_midpoint, (0, 255, 0), 10)
+
+    return img
+
+
 cap = cv2.VideoCapture("test1.mp4")
 while cap.isOpened():
     _, frame = cap.read()
@@ -121,9 +141,30 @@ while cap.isOpened():
     lines = houghLines(cropped_canny)
     # Used to obtain location of the lines
     averaged_lines = average_slope_intercept(frame, lines)
-    # Display the lines on the image
+
+    # Inside the main loop, after calculating averaged_lines
     line_image = display_lines(frame, averaged_lines)
     combo_image = addWeighted(frame, line_image)
+
+    if averaged_lines:
+        left_line = None
+        right_line = None
+
+        if len(averaged_lines) == 2:
+            left_line, right_line = averaged_lines
+        elif len(averaged_lines) == 1:
+            # Decide based on the slope which line you have (left or right)
+            line = averaged_lines[0]
+            if np.polyfit((line[0][0], line[0][2]), (line[0][1], line[0][3]), 1)[0] < 0:
+                left_line = line
+            else:
+                right_line = line
+
+        # Now draw the center line if both lines are detected
+        if left_line and right_line:
+            combo_image = draw_center_line(combo_image, left_line, right_line)
+
+    # Display the lines on the image
     cv2.imshow("result", combo_image)
 
     if cv2.waitKey(1) & 0xFF == ord("q"):
