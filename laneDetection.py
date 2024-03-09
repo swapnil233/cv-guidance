@@ -1,6 +1,16 @@
 import cv2
 import numpy as np
 
+# Define initial global constants for the ROI
+# INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest, and then use the printed values to replace the constants
+
+HORIZON = 41
+BOTTOM_TRIM = 99
+LEFT_MARGIN = 17
+RIGHT_MARGIN = 81
+TOP_LEFT_MARGIN = 39
+TOP_RIGHT_MARGIN = 48
+
 
 def canny_edge_detector(img):
     """
@@ -27,42 +37,26 @@ def canny_edge_detector(img):
     return edges
 
 
-def region_of_interest(edges, lines_info=None):
+def region_of_interest(edges, vertices):
     """
-    Applies a mask to the input edge-detected image to focus on the region of interest.
+    Applies a mask to the input edge-detected image to focus on the region of interest based on the vertices calculated from global variables or trackbar values.
 
     Parameters:
-    - edges: Edge-detected image. Comes after Canny edge detector.
+    - edges: Edge-detected image.
+    - vertices: Vertices of the polygon to mask the image.
 
     Returns:
     - Masked edge-detected image focusing on the region of interest.
     """
-    height, width = edges.shape
     mask = np.zeros_like(edges)
 
-    # These numbers represent the fraction of the image where you'll typically find the horizon and the bottom of the image.
-    horizon_line = height * 0.65
-    bottom_trim = (
-        height * 0.99
-    )  # This can be adjusted to ignore the very bottom of the image that might not contain useful information
+    # Assuming that vertices are in the correct format, fill the polygon
+    cv2.fillPoly(mask, [vertices], 255)
 
-    # Define the vertices of the trapezoid
-    vertices = np.array(
-        [
-            [
-                (width * 0.1, bottom_trim),  # Bottom left
-                (width * 0.4, horizon_line),  # Top left
-                (width * 0.6, horizon_line),  # Top right
-                (width * 0.9, bottom_trim),  # Bottom right
-            ]
-        ],
-        dtype=np.int32,
-    )
-
-    # Fill the defined polygon with white
-    cv2.fillPoly(mask, vertices, 255)
+    # Apply the mask to the edge-detected image
     masked_edges = cv2.bitwise_and(edges, mask)
-    return masked_edges, vertices
+
+    return masked_edges
 
 
 def detect_lines(masked_edges):
@@ -124,15 +118,26 @@ def draw_roi(img, vertices, color=(0, 255, 0), thickness=5):
 
 def create_trackbar_window(window_name):
     cv2.namedWindow(window_name)
-    # Create trackbars for adjusting ROI. The values are percentages of the image height.
-    cv2.createTrackbar("Horizon", window_name, 65, 100, lambda x: None)
-    cv2.createTrackbar("Bottom", window_name, 95, 100, lambda x: None)
+    cv2.createTrackbar("Horizon", window_name, HORIZON, 100, lambda x: None)
+    cv2.createTrackbar("Bottom", window_name, BOTTOM_TRIM, 100, lambda x: None)
+    cv2.createTrackbar("Left Margin", window_name, LEFT_MARGIN, 100, lambda x: None)
+    cv2.createTrackbar("Right Margin", window_name, RIGHT_MARGIN, 100, lambda x: None)
+    cv2.createTrackbar(
+        "Top Left Margin", window_name, TOP_LEFT_MARGIN, 100, lambda x: None
+    )
+    cv2.createTrackbar(
+        "Top Right Margin", window_name, TOP_RIGHT_MARGIN, 100, lambda x: None
+    )
 
 
 def get_trackbar_values(window_name):
-    horizon = cv2.getTrackbarPos("Horizon", window_name) / 100.0
-    bottom = cv2.getTrackbarPos("Bottom", window_name) / 100.0
-    return horizon, bottom
+    horizon = cv2.getTrackbarPos("Horizon", window_name)
+    bottom = cv2.getTrackbarPos("Bottom", window_name)
+    left_margin = cv2.getTrackbarPos("Left Margin", window_name)
+    right_margin = cv2.getTrackbarPos("Right Margin", window_name)
+    top_left_margin = cv2.getTrackbarPos("Top Left Margin", window_name)
+    top_right_margin = cv2.getTrackbarPos("Top Right Margin", window_name)
+    return horizon, bottom, left_margin, right_margin, top_left_margin, top_right_margin
 
 
 def region_of_interest(edges, vertices):
@@ -158,45 +163,70 @@ def process_video(video_path):
 
     create_trackbar_window("result")
 
-    while video_capture.isOpened():
-        ret, frame = video_capture.read()
-        if not ret:
-            print("Reached the end of the video or error reading the video frame.")
-            break
+    while True:  # Loop indefinitely
+        while video_capture.isOpened():
+            ret, frame = video_capture.read()
+            if not ret:
+                print("Reached the end of the video, restarting.")
+                video_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
 
-        horizon, bottom = get_trackbar_values("result")
-        height, width = frame.shape[:2]
+            (
+                horizon,
+                bottom,
+                left_margin,
+                right_margin,
+                top_left_margin,
+                top_right_margin,
+            ) = get_trackbar_values("result")
+            height, width = frame.shape[:2]
 
-        # Calculate dynamic ROI based on trackbar values
-        vertices = np.array(
-            [
+            vertices = np.array(
                 [
-                    (width * 0.1, height * bottom),  # Bottom left
-                    (width * 0.4, height * horizon),  # Top left
-                    (width * 0.6, height * horizon),  # Top right
-                    (width * 0.9, height * bottom),  # Bottom right
-                ]
-            ],
-            dtype=np.int32,
-        )
+                    [
+                        (
+                            width * left_margin / 100.0,
+                            height * bottom / 100.0,
+                        ),  # Bottom left
+                        (
+                            width * top_left_margin / 100.0,
+                            height * horizon / 100.0,
+                        ),  # Top left
+                        (
+                            width * top_right_margin / 100.0,
+                            height * horizon / 100.0,
+                        ),  # Top right
+                        (
+                            width * right_margin / 100.0,
+                            height * bottom / 100.0,
+                        ),  # Bottom right
+                    ]
+                ],
+                dtype=np.int32,
+            )
 
-        canny_image = canny_edge_detector(frame)
-        cropped_canny = region_of_interest(canny_image, vertices)
-        lines = detect_lines(cropped_canny)
-        combo_image = draw_lines(frame, lines)
-        combo_image = draw_roi(combo_image, vertices)
+            canny_image = canny_edge_detector(frame)
+            cropped_canny = region_of_interest(canny_image, vertices)
+            lines = detect_lines(cropped_canny)
+            combo_image = draw_lines(frame, lines)
+            combo_image = draw_roi(combo_image, vertices)
 
-        cv2.imshow("result", combo_image)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    video_capture.release()
-    cv2.destroyAllWindows()
+            cv2.imshow("result", combo_image)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                print(
+                    f"Final Horizon: {horizon}, Final Bottom: {bottom}, Left Margin: {left_margin}, Right Margin: {right_margin}, Top Left Margin: {top_left_margin}, Top Right Margin: {top_right_margin}"
+                )
+                print(
+                    "Replace the HORIZON, BOTTOM_TRIM, LEFT_MARGIN, and RIGHT_MARGIN constants with these values."
+                )
+                video_capture.release()
+                cv2.destroyAllWindows()
+                return  # Exit the function after printing the final values
 
 
 if __name__ == "__main__":
     video_paths = ["test1.mp4", "test2.mp4", "test3.mp4", "dash1.mp4"]
     try:
-        process_video(video_paths[3])
+        process_video(video_paths[1])
     except Exception as e:
         print(f"Error processing video: {e}")
