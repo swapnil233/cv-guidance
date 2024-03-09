@@ -2,173 +2,201 @@ import cv2
 import numpy as np
 
 
-def canny(img):
-    # used to see if there is an image. If not it will exit
+def canny_edge_detector(img):
+    """
+    Applies Canny edge detection algorithm to the input image.
+
+    Parameters:
+    - img: Input image in BGR format.
+
+    Returns:
+    - Edge-detected image.
+    """
     if img is None:
-        cap.release()
-        cv2.destroyAllWindows()
-        exit()
+        raise ValueError("Input image is None.")
 
-    # Convert from colored images to gray. Open cb uses bgr rather than rgb
+    # Convert to grayscale to get to single-channel
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    kernel = 5
+    median_intensity = np.median(gray)
+    lower_threshold = int(max(0, (1.0 - 0.33) * median_intensity))
+    upper_threshold = int(min(255, (1.0 + 0.33) * median_intensity))
 
-    # Blurring to reduce noise level (any image less than 5x5 will be erased)
-    blur = cv2.GaussianBlur(gray, (kernel, kernel), 0)
-
-    # Done on gray image
-    canny = cv2.Canny(blur, 50, 150)
-    return canny
+    # Apply gaussian blur to reduce noise
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, lower_threshold, upper_threshold)
+    return edges
 
 
-def region_of_interest(canny):
-    # Obtains height of canny array
-    height = canny.shape[0]
-    width = canny.shape[1]
+def region_of_interest(edges, lines_info=None):
+    """
+    Applies a mask to the input edge-detected image to focus on the region of interest.
 
-    # Want to remove everything excep for the road
-    mask = np.zeros_like(canny)
-    triangle = np.array(
+    Parameters:
+    - edges: Edge-detected image. Comes after Canny edge detector.
+
+    Returns:
+    - Masked edge-detected image focusing on the region of interest.
+    """
+    height, width = edges.shape
+    mask = np.zeros_like(edges)
+
+    # These numbers represent the fraction of the image where you'll typically find the horizon and the bottom of the image.
+    horizon_line = height * 0.65
+    bottom_trim = (
+        height * 0.99
+    )  # This can be adjusted to ignore the very bottom of the image that might not contain useful information
+
+    # Define the vertices of the trapezoid
+    vertices = np.array(
         [
             [
-                (200, height),
-                (800, 350),
-                (1200, height),
+                (width * 0.1, bottom_trim),  # Bottom left
+                (width * 0.4, horizon_line),  # Top left
+                (width * 0.6, horizon_line),  # Top right
+                (width * 0.9, bottom_trim),  # Bottom right
             ]
         ],
-        np.int32,
+        dtype=np.int32,
     )
 
-    # Masking out all except for the triangle
-    cv2.fillPoly(mask, triangle, 255)
-    masked_image = cv2.bitwise_and(canny, mask)
-    return masked_image
+    # Fill the defined polygon with white
+    cv2.fillPoly(mask, vertices, 255)
+    masked_edges = cv2.bitwise_and(edges, mask)
+    return masked_edges, vertices
 
 
-def houghLines(cropped_canny):
+def detect_lines(masked_edges):
+    """
+    Detects straight lines in the masked, edge-detected image using the Hough Transform algorithm.
+
+    This function converts the edge-detected image into a series of lines, defined by their endpoints.
+    Parameters such as the resolution of the accumulator, minimum line length, and maximum gap between
+    line segments can be adjusted to optimize detection.
+
+    Parameters:
+    - masked_edges: Masked edge-detected image.
+
+    Returns:
+    - Lines detected in the image.
+    """
     return cv2.HoughLinesP(
-        cropped_canny, 2, np.pi / 180, 100, np.array([]), minLineLength=40, maxLineGap=5
+        masked_edges, 2, np.pi / 180, 100, np.array([]), minLineLength=70, maxLineGap=20
     )
 
 
-def addWeighted(frame, line_image):
-    return cv2.addWeighted(frame, 0.8, line_image, 1, 1)
+def draw_lines(img, lines):
+    """
+    Draws lines on the image.
 
+    Parameters:
+    - img: Original image.
+    - lines: Lines to draw.
 
-def display_lines(img, lines):
+    Returns:
+    - Image with lines drawn.
+    """
     line_image = np.zeros_like(img)
     if lines is not None:
         for line in lines:
-            if line is not None:  # Check if the line is not None
-                for x1, y1, x2, y2 in line:
-                    # Ensure x1, y1, x2, y2 are integers
-                    x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
-                    cv2.line(line_image, (x1, y1), (x2, y2), (0, 0, 255), 10)
-    return line_image
+            for x1, y1, x2, y2 in line:
+                cv2.line(line_image, (x1, y1), (x2, y2), (0, 0, 255), 5)
+    return cv2.addWeighted(img, 0.8, line_image, 1, 1)
 
 
-def make_points(image, line):
-    try:
-        slope, intercept = line
-        y1 = int(image.shape[0])
-        y2 = int(y1 * 3.0 / 5)
-        x1 = int((y1 - intercept) / slope)
-        x2 = int((y2 - intercept) / slope)
-        return [[x1, y1, x2, y2]]
-    except Exception as e:
-        print(f"Error in make_points: {e}")
-        return None  # Return None if there's an error
-
-
-# Goes through each line and tries to identify which line is important and which is not
-def average_slope_intercept(image, lines):
-    left_fit = []
-    right_fit = []
-    if lines is None:
-        return None
-    for line in lines:
-        for x1, y1, x2, y2 in line:
-            fit = np.polyfit((x1, x2), (y1, y2), 1)
-            slope = fit[0]
-            intercept = fit[1]
-            if slope < 0:
-                left_fit.append((slope, intercept))
-            else:
-                right_fit.append((slope, intercept))
-    if left_fit:
-        left_fit_average = np.average(left_fit, axis=0)
-        left_line = make_points(image, left_fit_average)
-    else:
-        left_line = None
-    if right_fit:
-        right_fit_average = np.average(right_fit, axis=0)
-        right_line = make_points(image, right_fit_average)
-    else:
-        right_line = None
-    averaged_lines = [line for line in [left_line, right_line] if line is not None]
-    return averaged_lines
-
-
-def draw_center_line(img, left_line, right_line):
+def draw_roi(img, vertices, color=(0, 255, 0), thickness=5):
     """
-    Draws the center line between the left and right lanes.
-    """
-    if left_line is not None and right_line is not None:
-        # Calculate the midpoint at the bottom of the image (where the car is)
-        bottom_midpoint = ((left_line[0][0] + right_line[0][0]) // 2, img.shape[0])
+    Draws the region of interest on the image.
 
-        # Calculate the midpoint further up the road
-        top_midpoint = (
-            (left_line[0][2] + right_line[0][2]) // 2,
-            (left_line[0][3] + right_line[0][3]) // 2,
+    Parameters:
+    - img: The original image.
+    - vertices: The vertices of the polygon representing the region of interest.
+    - color: The color of the polygon's edges. Default is green.
+    - thickness: The thickness of the polygon's edges.
+    """
+    for i in range(vertices.shape[1] - 1):
+        cv2.line(
+            img, tuple(vertices[0][i]), tuple(vertices[0][i + 1]), color, thickness
         )
-
-        # Draw the center line
-        cv2.line(img, bottom_midpoint, top_midpoint, (0, 255, 0), 10)
-
+    # Draw a line from the last vertex to the first vertex
+    cv2.line(img, tuple(vertices[0][-1]), tuple(vertices[0][0]), color, thickness)
     return img
 
 
-cap = cv2.VideoCapture("test1.mp4")
-while cap.isOpened():
-    _, frame = cap.read()
-    canny_image = canny(frame)
-    cropped_canny = region_of_interest(canny_image)
-    # cv2.imshow("cropped_canny",cropped_canny)
-    # Showing all the edges
-    # cv2.imshow("canny_image", canny_image)
-    # Gives an approximate ppresence of lines in an image
-    lines = houghLines(cropped_canny)
-    # Used to obtain location of the lines
-    averaged_lines = average_slope_intercept(frame, lines)
+def create_trackbar_window(window_name):
+    cv2.namedWindow(window_name)
+    # Create trackbars for adjusting ROI. The values are percentages of the image height.
+    cv2.createTrackbar("Horizon", window_name, 65, 100, lambda x: None)
+    cv2.createTrackbar("Bottom", window_name, 95, 100, lambda x: None)
 
-    # Inside the main loop, after calculating averaged_lines
-    line_image = display_lines(frame, averaged_lines)
-    combo_image = addWeighted(frame, line_image)
 
-    if averaged_lines:
-        left_line = None
-        right_line = None
+def get_trackbar_values(window_name):
+    horizon = cv2.getTrackbarPos("Horizon", window_name) / 100.0
+    bottom = cv2.getTrackbarPos("Bottom", window_name) / 100.0
+    return horizon, bottom
 
-        if len(averaged_lines) == 2:
-            left_line, right_line = averaged_lines
-        elif len(averaged_lines) == 1:
-            # Decide based on the slope which line you have (left or right)
-            line = averaged_lines[0]
-            if np.polyfit((line[0][0], line[0][2]), (line[0][1], line[0][3]), 1)[0] < 0:
-                left_line = line
-            else:
-                right_line = line
 
-        # Now draw the center line if both lines are detected
-        if left_line and right_line:
-            combo_image = draw_center_line(combo_image, left_line, right_line)
+def region_of_interest(edges, vertices):
+    """
+    Modifies the region of interest based on trackbar positions.
+    """
+    mask = np.zeros_like(edges)
+    cv2.fillPoly(mask, vertices, 255)
+    masked_edges = cv2.bitwise_and(edges, mask)
+    return masked_edges
 
-    # Display the lines on the image
-    cv2.imshow("result", combo_image)
 
-    if cv2.waitKey(1) & 0xFF == ord("q"):
-        break
+def process_video(video_path):
+    """
+    Processes the video for lane detection.
 
-cap.release()
-cv2.destroyAllWindows()
+    Parameters:
+    - video_path: Path to the video file.
+    """
+    video_capture = cv2.VideoCapture(video_path)
+    if not video_capture.isOpened():
+        raise IOError(f"Cannot open video {video_path}")
+
+    create_trackbar_window("result")
+
+    while video_capture.isOpened():
+        ret, frame = video_capture.read()
+        if not ret:
+            print("Reached the end of the video or error reading the video frame.")
+            break
+
+        horizon, bottom = get_trackbar_values("result")
+        height, width = frame.shape[:2]
+
+        # Calculate dynamic ROI based on trackbar values
+        vertices = np.array(
+            [
+                [
+                    (width * 0.1, height * bottom),  # Bottom left
+                    (width * 0.4, height * horizon),  # Top left
+                    (width * 0.6, height * horizon),  # Top right
+                    (width * 0.9, height * bottom),  # Bottom right
+                ]
+            ],
+            dtype=np.int32,
+        )
+
+        canny_image = canny_edge_detector(frame)
+        cropped_canny = region_of_interest(canny_image, vertices)
+        lines = detect_lines(cropped_canny)
+        combo_image = draw_lines(frame, lines)
+        combo_image = draw_roi(combo_image, vertices)
+
+        cv2.imshow("result", combo_image)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    video_capture.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    video_paths = ["test1.mp4", "test2.mp4", "test3.mp4", "dash1.mp4"]
+    try:
+        process_video(video_paths[3])
+    except Exception as e:
+        print(f"Error processing video: {e}")
