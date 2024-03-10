@@ -64,11 +64,11 @@ def detect_lines(masked_edges):
     - Lines detected in the image.
     """
     return cv2.HoughLinesP(
-        masked_edges, 2, np.pi / 180, 100, np.array([]), minLineLength=70, maxLineGap=20
+        masked_edges, 1, np.pi / 180, 50, np.array([]), minLineLength=40, maxLineGap=100
     )
 
 
-def draw_lines(img, lines):
+def draw_lines(img, lines, top_y, bottom_y):
     """
     Draws lines on the image.
 
@@ -79,12 +79,44 @@ def draw_lines(img, lines):
     Returns:
     - Image with lines drawn.
     """
-    line_image = np.zeros_like(img)
+    left_line_x = []
+    left_line_y = []
+    right_line_x = []
+    right_line_y = []
+
     if lines is not None:
         for line in lines:
             for x1, y1, x2, y2 in line:
-                cv2.line(line_image, (x1, y1), (x2, y2), (0, 0, 255), 5)
-    return cv2.addWeighted(img, 0.8, line_image, 1, 1)
+                slope = (y2 - y1) / (x2 - x1)  # Calculate slope
+                if abs(slope) < 0.5:  # Ignore lines that are almost horizontal
+                    continue
+                if slope <= 0:  # Left lane
+                    left_line_x.extend([x1, x2])
+                    left_line_y.extend([y1, y2])
+                else:  # Right lane
+                    right_line_x.extend([x1, x2])
+                    right_line_y.extend([y1, y2])
+
+    # When calling draw_poly_line, pass the new top_y and bottom_y values
+    if left_line_x and left_line_y:
+        left_poly = np.polyfit(left_line_y, left_line_x, deg=1)
+        draw_poly_line(img, left_poly, top_y, bottom_y, color=(255, 0, 0), thickness=5)
+
+    if right_line_x and right_line_y:
+        right_poly = np.polyfit(right_line_y, right_line_x, deg=1)
+        draw_poly_line(img, right_poly, top_y, bottom_y, color=(255, 0, 0), thickness=5)
+
+    return img
+
+
+def draw_poly_line(img, poly, top_y, bottom_y, color=(255, 0, 0), thickness=5):
+    """
+    Draws a line on the image based on polynomial coefficients, extending from bottom_y to top_y.
+    """
+    x1 = int(np.polyval(poly, bottom_y))
+    x2 = int(np.polyval(poly, top_y))
+
+    cv2.line(img, (x1, bottom_y), (x2, top_y), color, thickness)
 
 
 def draw_roi(img, vertices, color=(0, 255, 0), thickness=5):

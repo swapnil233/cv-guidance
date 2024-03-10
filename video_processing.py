@@ -49,6 +49,9 @@ def process_video(video_path):
             ) = get_trackbar_values("result")
             height, width = frame.shape[:2]
 
+            top_y = int(height * horizon / 100.0)  # Convert from percentage to pixels
+            bottom_y = int(height * bottom / 100.0)  # Convert from percentage to pixels
+
             vertices = np.array(
                 [
                     [
@@ -76,8 +79,8 @@ def process_video(video_path):
             canny_image = canny_edge_detector(frame)
             cropped_canny = region_of_interest(canny_image, vertices)
             lines = detect_lines(cropped_canny)
-            combo_image = draw_lines(frame, lines)
-            combo_image = draw_roi(combo_image, vertices)
+            combo_image = draw_lines(frame, lines, top_y, bottom_y)
+            # combo_image = draw_roi(combo_image, vertices)
 
             cv2.imshow("result", combo_image)
             if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -97,9 +100,13 @@ if __name__ == "__main__":
         "test_videos/test1.mp4",
         "test_videos/test2.mp4",
         "test_videos/test3.mp4",
+        "test_videos/test4.mp4",
+        "test_videos/test5.mp4",
         "test_videos/dash1.mp4",
+        "test_videos/dash2.mp4",
+        "test_videos/dash3.mp4",
     ]
     try:
-        process_video(video_paths[0])
+        process_video(video_paths[7])
     except Exception as e:
         print(f"Error processing video: {e}")
