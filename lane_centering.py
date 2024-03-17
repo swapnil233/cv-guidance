@@ -11,6 +11,11 @@ RIGHT_MARGIN = 83
 TOP_LEFT_MARGIN = 40
 TOP_RIGHT_MARGIN = 50
 
+# Initialize buffers for storing line coefficients
+left_line_buffer = []
+right_line_buffer = []
+buffer_length = 20  # Determines how many frames to average over
+
 
 # UI Utilities
 def create_trackbar_window(window_name):
@@ -40,7 +45,7 @@ def get_trackbar_values(window_name):
 # Image Processing
 def canny_edge_detector(img):
     """
-    Applies Canny edge detection algorithm to the input image.
+    Applies Canny edge detection algorithm to the input image after converting it to HSL color space.
 
     Parameters:
     - img: Input image in BGR format.
@@ -51,14 +56,18 @@ def canny_edge_detector(img):
     if img is None:
         raise ValueError("Input image is None.")
 
-    # Convert to grayscale to get to single-channel
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    median_intensity = np.median(gray)
+    # Convert the image to HSL color space
+    hsl = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
+
+    # Use the Lightness channel.
+    lightness = hsl[:, :, 1]
+
+    median_intensity = np.median(lightness)
     lower_threshold = int(max(0, (1.0 - 0.33) * median_intensity))
     upper_threshold = int(min(255, (1.0 + 0.33) * median_intensity))
 
     # Apply gaussian blur to reduce noise
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    blur = cv2.GaussianBlur(lightness, (5, 5), 0)
     edges = cv2.Canny(blur, lower_threshold, upper_threshold)
     return edges
 
@@ -115,6 +124,10 @@ def draw_lines(img, lines, top_y, bottom_y):
     Returns:
     - Image with lines drawn.
     """
+
+    global left_line_buffer, right_line_buffer
+
+    # Lists to store the coordinates of the line segments classified as left or right lanes
     left_line_x = []
     left_line_y = []
     right_line_x = []
@@ -123,36 +136,62 @@ def draw_lines(img, lines, top_y, bottom_y):
     if lines is not None:
         for line in lines:
             for x1, y1, x2, y2 in line:
-                slope = (y2 - y1) / (x2 - x1)  # Calculate slope
-                if abs(slope) < 0.5:  # Ignore lines that are almost horizontal
+                slope = (y2 - y1) / (x2 - x1)  # Calculate the slope of the line segment
+                if abs(slope) < 0.5:  # Ignore lines that are nearly horizontal
                     continue
-                if slope <= 0:  # Left lane
+                if slope <= 0:  # Left lane line segments have a negative slope
                     left_line_x.extend([x1, x2])
                     left_line_y.extend([y1, y2])
-                else:  # Right lane
+                else:  # Right lane line segments have a positive slope
                     right_line_x.extend([x1, x2])
                     right_line_y.extend([y1, y2])
 
-    # When calling draw_poly_line, pass the new top_y and bottom_y values
+    # Only proceed if we have detected line segments
     if left_line_x and left_line_y:
+        # Fit a first degree polynomial (line) to the points
         left_poly = np.polyfit(left_line_y, left_line_x, deg=1)
-        draw_poly_line(img, left_poly, top_y, bottom_y, color=(255, 0, 0), thickness=5)
+
+        # Add the latest polynomial coefficients to the buffer
+        left_line_buffer.append(left_poly)
+        if len(left_line_buffer) > buffer_length:
+            left_line_buffer.pop(0)  # Remove the oldest entry if buffer is full
+
+        # Calculate the average coefficients over the buffered frames
+        left_poly_avg = np.mean(left_line_buffer, axis=0)
+
+        # Draw the averaged line
+        draw_poly_line(
+            img, left_poly_avg, top_y, bottom_y, color=(255, 0, 0), thickness=5
+        )
 
     if right_line_x and right_line_y:
+        # Fit a first degree polynomial (line) to the points
         right_poly = np.polyfit(right_line_y, right_line_x, deg=1)
-        draw_poly_line(img, right_poly, top_y, bottom_y, color=(255, 0, 0), thickness=5)
+
+        # Add the latest polynomial coefficients to the buffer
+        right_line_buffer.append(right_poly)
+        if len(right_line_buffer) > buffer_length:
+            right_line_buffer.pop(0)  # Remove the oldest entry if buffer is full
+
+        # Calculate the average coefficients over the buffered frames
+        right_poly_avg = np.mean(right_line_buffer, axis=0)
+
+        # Draw the averaged line
+        draw_poly_line(
+            img, right_poly_avg, top_y, bottom_y, color=(0, 0, 255), thickness=5
+        )
 
     return img
 
 
+# Optional: Calculate and display the lane deviation from the center, etc., as previously described
 def draw_poly_line(img, poly, top_y, bottom_y, color=(255, 0, 0), thickness=5):
     """
     Draws a line on the image based on polynomial coefficients, extending from bottom_y to top_y.
     """
-    x1 = int(np.polyval(poly, bottom_y))
-    x2 = int(np.polyval(poly, top_y))
-
-    cv2.line(img, (x1, bottom_y), (x2, top_y), color, thickness)
+    x_start = int(np.polyval(poly, bottom_y))
+    x_end = int(np.polyval(poly, top_y))
+    cv2.line(img, (x_start, bottom_y), (x_end, top_y), color, thickness)
 
 
 def draw_roi(img, vertices, color=(0, 255, 0), thickness=5):
@@ -254,16 +293,16 @@ def process_video(video_path):
 
 if __name__ == "__main__":
     video_paths = [
-        "test_videos/test1.mp4",
-        "test_videos/test2.mp4",
-        "test_videos/test3.mp4",
-        "test_videos/test4.mp4",
-        "test_videos/test5.mp4",
-        "test_videos/dash1.mp4",
-        "test_videos/dash2.mp4",
-        "test_videos/dash3.mp4",
+        "test_videos/test1.mp4",  # 0
+        "test_videos/test2.mp4",  # 1
+        "test_videos/test3.mp4",  # 2
+        "test_videos/test4.mp4",  # 3
+        "test_videos/test5.mp4",  # 4
+        "test_videos/dash1.mp4",  # 5
+        "test_videos/dash2.mp4",  # 6
+        "test_videos/dash3.mp4",  # 7
     ]
     try:
-        process_video(video_paths[5])
+        process_video(video_paths[1])
     except Exception as e:
         print(f"Error processing video: {e}")
