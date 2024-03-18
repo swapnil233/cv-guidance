@@ -14,7 +14,7 @@ TOP_RIGHT_MARGIN = 50
 # Initialize buffers for storing line coefficients
 left_line_buffer = []
 right_line_buffer = []
-buffer_length = 20  # Determines how many frames to average over
+buffer_length = 2  # Determines how many frames to average over
 
 
 # UI Utilities
@@ -109,7 +109,7 @@ def detect_lines(masked_edges):
     - Lines detected in the image.
     """
     return cv2.HoughLinesP(
-        masked_edges, 1, np.pi / 180, 50, np.array([]), minLineLength=40, maxLineGap=100
+        masked_edges, 1, np.pi / 180, 50, np.array([]), minLineLength=20, maxLineGap=150
     )
 
 
@@ -124,62 +124,90 @@ def draw_lines(img, lines, top_y, bottom_y):
     Returns:
     - Image with lines drawn.
     """
-
     global left_line_buffer, right_line_buffer
 
-    # Lists to store the coordinates of the line segments classified as left or right lanes
     left_line_x = []
     left_line_y = []
     right_line_x = []
     right_line_y = []
+    detected_left_line = False
+    detected_right_line = False
 
     if lines is not None:
         for line in lines:
             for x1, y1, x2, y2 in line:
-                slope = (y2 - y1) / (x2 - x1)  # Calculate the slope of the line segment
-                if abs(slope) < 0.5:  # Ignore lines that are nearly horizontal
+                slope = (y2 - y1) / (x2 - x1)
+                if abs(slope) < 0.5:
                     continue
-                if slope <= 0:  # Left lane line segments have a negative slope
+                if slope <= 0:
                     left_line_x.extend([x1, x2])
                     left_line_y.extend([y1, y2])
-                else:  # Right lane line segments have a positive slope
+                    detected_left_line = True
+                else:
                     right_line_x.extend([x1, x2])
                     right_line_y.extend([y1, y2])
+                    detected_right_line = True
 
-    # Only proceed if we have detected line segments
-    if left_line_x and left_line_y:
-        # Fit a first degree polynomial (line) to the points
+    left_x_pos = img.shape[1] * 0.25
+    right_x_pos = img.shape[1] * 0.75
+
+    if detected_left_line and left_line_x and left_line_y:
         left_poly = np.polyfit(left_line_y, left_line_x, deg=1)
-
-        # Add the latest polynomial coefficients to the buffer
         left_line_buffer.append(left_poly)
-        if len(left_line_buffer) > buffer_length:
-            left_line_buffer.pop(0)  # Remove the oldest entry if buffer is full
+        left_x_pos = np.polyval(left_poly, bottom_y)
+    elif left_line_buffer:
+        left_poly = left_line_buffer[-1]
+        left_x_pos = np.polyval(left_poly, bottom_y)
 
-        # Calculate the average coefficients over the buffered frames
+    if detected_right_line and right_line_x and right_line_y:
+        right_poly = np.polyfit(right_line_y, right_line_x, deg=1)
+        right_line_buffer.append(right_poly)
+        right_x_pos = np.polyval(right_poly, bottom_y)
+    elif right_line_buffer:
+        right_poly = right_line_buffer[-1]
+        right_x_pos = np.polyval(right_poly, bottom_y)
+
+    lane_center = (left_x_pos + right_x_pos) / 2
+    car_position = img.shape[1] / 2
+    deviation_pixels = car_position - lane_center
+    meters_per_pixel = 3.7 / (right_x_pos - left_x_pos)
+    deviation_meters = deviation_pixels * meters_per_pixel
+
+    deviation_direction = "right" if deviation_meters > 0 else "left"
+    abs_deviation_meters = abs(deviation_meters)
+
+    if left_line_buffer:
         left_poly_avg = np.mean(left_line_buffer, axis=0)
-
-        # Draw the averaged line
         draw_poly_line(
             img, left_poly_avg, top_y, bottom_y, color=(255, 0, 0), thickness=5
         )
 
-    if right_line_x and right_line_y:
-        # Fit a first degree polynomial (line) to the points
-        right_poly = np.polyfit(right_line_y, right_line_x, deg=1)
-
-        # Add the latest polynomial coefficients to the buffer
-        right_line_buffer.append(right_poly)
-        if len(right_line_buffer) > buffer_length:
-            right_line_buffer.pop(0)  # Remove the oldest entry if buffer is full
-
-        # Calculate the average coefficients over the buffered frames
+    if right_line_buffer:
         right_poly_avg = np.mean(right_line_buffer, axis=0)
-
-        # Draw the averaged line
         draw_poly_line(
             img, right_poly_avg, top_y, bottom_y, color=(0, 0, 255), thickness=5
         )
+
+    # Draw lane center marker
+    cv2.line(
+        img,
+        (int(lane_center), bottom_y),
+        (int(lane_center), top_y),
+        color=(0, 255, 255),
+        thickness=2,
+    )
+
+    # Update text to indicate direction of deviation
+    cv2.putText(
+        img,
+        f"{abs_deviation_meters:.2f} m {deviation_direction} of center",
+        (50, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
 
     return img
 
@@ -303,6 +331,6 @@ if __name__ == "__main__":
         "test_videos/dash3.mp4",  # 7
     ]
     try:
-        process_video(video_paths[1])
+        process_video(video_paths[7])
     except Exception as e:
         print(f"Error processing video: {e}")
