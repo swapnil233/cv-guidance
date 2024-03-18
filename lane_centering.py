@@ -4,17 +4,23 @@ import numpy as np
 # Define initial global constants for the ROI
 # INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest, and then use the printed values to replace the constants
 
-HORIZON = 43
-BOTTOM_TRIM = 100
-LEFT_MARGIN = 16
-RIGHT_MARGIN = 83
-TOP_LEFT_MARGIN = 40
-TOP_RIGHT_MARGIN = 50
+HORIZON = 66
+BOTTOM_TRIM = 93
+LEFT_MARGIN = 26
+RIGHT_MARGIN = 74
+TOP_LEFT_MARGIN = 44
+TOP_RIGHT_MARGIN = 57
 
 # Initialize buffers for storing line coefficients
 left_line_buffer = []
 right_line_buffer = []
 buffer_length = 2  # Determines how many frames to average over
+
+# ROAD WIDTH
+ROAD_WIDTH = 3.7  # meters
+
+# Set to True to hide the region of interest overlay
+HIDE_ROI = True
 
 
 # UI Utilities
@@ -94,6 +100,25 @@ def region_of_interest(edges, vertices):
     return masked_edges
 
 
+def draw_roi(img, vertices, color=(0, 255, 0), thickness=5):
+    """
+    Draws the region of interest on the image.
+
+    Parameters:
+    - img: The original image.
+    - vertices: The vertices of the polygon representing the region of interest.
+    - color: The color of the polygon's edges. Default is green.
+    - thickness: The thickness of the polygon's edges.
+    """
+    for i in range(vertices.shape[1] - 1):
+        cv2.line(
+            img, tuple(vertices[0][i]), tuple(vertices[0][i + 1]), color, thickness
+        )
+    # Draw a line from the last vertex to the first vertex
+    cv2.line(img, tuple(vertices[0][-1]), tuple(vertices[0][0]), color, thickness)
+    return img
+
+
 def detect_lines(masked_edges):
     """
     Detects straight lines in the masked, edge-detected image using the Hough Transform algorithm.
@@ -137,13 +162,13 @@ def draw_lines(img, lines, top_y, bottom_y):
         for line in lines:
             for x1, y1, x2, y2 in line:
                 slope = (y2 - y1) / (x2 - x1)
-                if abs(slope) < 0.5:
+                if abs(slope) < 0.5:  # Filter out horizontal lines
                     continue
-                if slope <= 0:
+                if slope <= 0:  # Left lane
                     left_line_x.extend([x1, x2])
                     left_line_y.extend([y1, y2])
                     detected_left_line = True
-                else:
+                else:  # Right lane
                     right_line_x.extend([x1, x2])
                     right_line_y.extend([y1, y2])
                     detected_right_line = True
@@ -170,7 +195,7 @@ def draw_lines(img, lines, top_y, bottom_y):
     lane_center = (left_x_pos + right_x_pos) / 2
     car_position = img.shape[1] / 2
     deviation_pixels = car_position - lane_center
-    meters_per_pixel = 3.7 / (right_x_pos - left_x_pos)
+    meters_per_pixel = ROAD_WIDTH / (right_x_pos - left_x_pos)
     deviation_meters = deviation_pixels * meters_per_pixel
 
     deviation_direction = "right" if deviation_meters > 0 else "left"
@@ -179,23 +204,70 @@ def draw_lines(img, lines, top_y, bottom_y):
     if left_line_buffer:
         left_poly_avg = np.mean(left_line_buffer, axis=0)
         draw_poly_line(
-            img, left_poly_avg, top_y, bottom_y, color=(255, 0, 0), thickness=5
+            img,
+            left_poly_avg,
+            top_y,
+            bottom_y,
+            color=(255, 0, 0),
+            thickness=5,
+            alpha=0.5,
         )
 
     if right_line_buffer:
         right_poly_avg = np.mean(right_line_buffer, axis=0)
         draw_poly_line(
-            img, right_poly_avg, top_y, bottom_y, color=(0, 0, 255), thickness=5
+            img,
+            right_poly_avg,
+            top_y,
+            bottom_y,
+            color=(0, 0, 255),
+            thickness=5,
+            alpha=0.5,
         )
 
-    # Draw lane center marker
-    cv2.line(
-        img,
-        (int(lane_center), bottom_y),
-        (int(lane_center), top_y),
-        color=(0, 255, 255),
-        thickness=2,
-    )
+    # Draw semi-transparent green overlay
+    if detected_left_line and detected_right_line:
+        overlay = img.copy()
+        pts = np.array(
+            [
+                [np.polyval(left_poly_avg, bottom_y), bottom_y],
+                [np.polyval(left_poly_avg, top_y), top_y],
+                [np.polyval(right_poly_avg, top_y), top_y],
+                [np.polyval(right_poly_avg, bottom_y), bottom_y],
+            ],
+            np.int32,
+        )
+        pts = pts.reshape((-1, 1, 2))
+        cv2.fillPoly(overlay, [pts], (0, 255, 0))
+        cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
+
+    # Average the position of the left and right lanes if detected
+    if detected_left_line and detected_right_line:
+        # Calculate average lines using polynomial fit
+        left_poly = np.polyfit(left_line_y, left_line_x, deg=1)
+        right_poly = np.polyfit(right_line_y, right_line_x, deg=1)
+
+        # Calculate the x positions of each lane at the top and bottom y coordinates
+        left_bottom_x = np.polyval(left_poly, bottom_y)
+        left_top_x = np.polyval(left_poly, top_y)
+        right_bottom_x = np.polyval(right_poly, bottom_y)
+        right_top_x = np.polyval(right_poly, top_y)
+
+        # Calculate the midpoints of the top and bottom positions
+        bottom_midpoint_x = (left_bottom_x + right_bottom_x) / 2
+        top_midpoint_x = (left_top_x + right_top_x) / 2
+
+        # Draw the dynamic center line
+        cv2.line(
+            img,
+            (int(bottom_midpoint_x), bottom_y),
+            (int(top_midpoint_x), top_y),
+            (0, 255, 255),
+            2,
+        )
+    else:
+        # Optionally handle cases where one or neither lane is detected
+        pass
 
     # Update text to indicate direction of deviation
     cv2.putText(
@@ -213,32 +285,32 @@ def draw_lines(img, lines, top_y, bottom_y):
 
 
 # Optional: Calculate and display the lane deviation from the center, etc., as previously described
-def draw_poly_line(img, poly, top_y, bottom_y, color=(255, 0, 0), thickness=5):
+def draw_poly_line(
+    img, poly, top_y, bottom_y, color=(255, 0, 0), thickness=5, alpha=0.5
+):
     """
-    Draws a line on the image based on polynomial coefficients, extending from bottom_y to top_y.
-    """
-    x_start = int(np.polyval(poly, bottom_y))
-    x_end = int(np.polyval(poly, top_y))
-    cv2.line(img, (x_start, bottom_y), (x_end, top_y), color, thickness)
-
-
-def draw_roi(img, vertices, color=(0, 255, 0), thickness=5):
-    """
-    Draws the region of interest on the image.
+    Draws a semi-transparent line on the image based on polynomial coefficients, extending from bottom_y to top_y.
 
     Parameters:
-    - img: The original image.
-    - vertices: The vertices of the polygon representing the region of interest.
-    - color: The color of the polygon's edges. Default is green.
-    - thickness: The thickness of the polygon's edges.
+    - img: Original image.
+    - poly: Polynomial coefficients for the line equation.
+    - top_y: Top Y-coordinate for the line.
+    - bottom_y: Bottom Y-coordinate for the line.
+    - color: Line color.
+    - thickness: Line thickness.
+    - alpha: Transparency of the line.
     """
-    for i in range(vertices.shape[1] - 1):
-        cv2.line(
-            img, tuple(vertices[0][i]), tuple(vertices[0][i + 1]), color, thickness
-        )
-    # Draw a line from the last vertex to the first vertex
-    cv2.line(img, tuple(vertices[0][-1]), tuple(vertices[0][0]), color, thickness)
-    return img
+    # Create an overlay for drawing lines
+    lines_overlay = img.copy()
+
+    x_start = int(np.polyval(poly, bottom_y))
+    x_end = int(np.polyval(poly, top_y))
+
+    # Draw the line on the overlay
+    cv2.line(lines_overlay, (x_start, bottom_y), (x_end, top_y), color, thickness)
+
+    # Blend the overlay with the original image
+    cv2.addWeighted(lines_overlay, alpha, img, 1 - alpha, 0, img)
 
 
 # Video Processing
@@ -304,7 +376,10 @@ def process_video(video_path):
             cropped_canny = region_of_interest(canny_image, vertices)
             lines = detect_lines(cropped_canny)
             combo_image = draw_lines(frame, lines, top_y, bottom_y)
-            combo_image = draw_roi(combo_image, vertices)
+
+            # Draw the ROI only if HIDE_ROI is False
+            if not HIDE_ROI:
+                combo_image = draw_roi(combo_image, vertices)
 
             cv2.imshow("result", combo_image)
             if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -329,6 +404,7 @@ if __name__ == "__main__":
         "test_videos/dash1.mp4",  # 5
         "test_videos/dash2.mp4",  # 6
         "test_videos/dash3.mp4",  # 7
+        "test_videos/test6.mp4",  # 8
     ]
     try:
         process_video(video_paths[7])
