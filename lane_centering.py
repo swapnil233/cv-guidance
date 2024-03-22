@@ -1,15 +1,21 @@
 import cv2
 import numpy as np
+import datetime
 
-# Define initial global constants for the ROI
-# INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest, and then use the printed values to replace the constants
-
+# Define initial global constants for the region of interest (ROI)
+# INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest,
+# and then use the values on the trackbars to update the global constants below:
 HORIZON = 66
 BOTTOM_TRIM = 93
 LEFT_MARGIN = 26
 RIGHT_MARGIN = 74
 TOP_LEFT_MARGIN = 44
 TOP_RIGHT_MARGIN = 57
+
+# Input can either be a video on disk, or a live video stream from a USB camera
+# Video files are stored in the test_videos directory.
+# See the very bottom of the script for the list of available videos.
+VIDEO_OR_CAMERA = "video"  # "video" or "camera"
 
 # Initialize buffers for storing line coefficients
 left_line_buffer = []
@@ -138,7 +144,7 @@ def detect_lines(masked_edges):
     )
 
 
-def draw_lines(img, lines, top_y, bottom_y):
+def draw_lines(img, lines, top_y, bottom_y, offset_file):
     """
     Draws lines on the image.
 
@@ -281,8 +287,7 @@ def draw_lines(img, lines, top_y, bottom_y):
         cv2.LINE_AA,
     )
 
-    # Print the offset from the center
-    print(deviation_meters)
+    offset_file.write(f"{deviation_meters}\n")
 
     return img
 
@@ -324,77 +329,81 @@ def process_video(video_path):
     Parameters:
     - video_path: Path to the video file.
     """
-    video_capture = cv2.VideoCapture(video_path)
+    video_capture = cv2.VideoCapture(video_path if VIDEO_OR_CAMERA == "video" else 0)
     if not video_capture.isOpened():
         raise IOError(f"Cannot open video {video_path}")
 
+    # Create a window with trackbars for adjusting the region of interest
     create_trackbar_window("result")
 
-    while True:  # Loop indefinitely
-        while video_capture.isOpened():
-            ret, frame = video_capture.read()
-            if not ret:
-                print("Reached the end of the video, restarting.")
-                video_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                continue
+    # Create a file to store the offsets
+    unique_filename = (
+        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_offsets.txt"
+    )
+    offset_file = open(unique_filename, "w")
 
-            (
-                horizon,
-                bottom,
-                left_margin,
-                right_margin,
-                top_left_margin,
-                top_right_margin,
-            ) = get_trackbar_values("result")
+    while True:
+        ret, frame = video_capture.read()
+        if not ret:
+            print("Reached the end of the video.")
+            break  # Exit the loop if video end is reached
 
-            height, width = frame.shape[:2]
-            top_y = int(height * horizon / 100.0)  # Convert from percentage to pixels
-            bottom_y = int(height * bottom / 100.0)
+        (
+            horizon,
+            bottom,
+            left_margin,
+            right_margin,
+            top_left_margin,
+            top_right_margin,
+        ) = get_trackbar_values("result")
 
-            vertices = np.array(
+        height, width = frame.shape[:2]
+        top_y = int(height * horizon / 100.0)  # Convert from percentage to pixels
+        bottom_y = int(height * bottom / 100.0)
+
+        vertices = np.array(
+            [
                 [
-                    [
-                        (
-                            width * left_margin / 100.0,
-                            height * bottom / 100.0,
-                        ),  # Bottom left
-                        (
-                            width * top_left_margin / 100.0,
-                            height * horizon / 100.0,
-                        ),  # Top left
-                        (
-                            width * top_right_margin / 100.0,
-                            height * horizon / 100.0,
-                        ),  # Top right
-                        (
-                            width * right_margin / 100.0,
-                            height * bottom / 100.0,
-                        ),  # Bottom right
-                    ]
-                ],
-                dtype=np.int32,
-            )
+                    (
+                        width * left_margin / 100.0,
+                        height * bottom / 100.0,
+                    ),  # Bottom left
+                    (
+                        width * top_left_margin / 100.0,
+                        height * horizon / 100.0,
+                    ),  # Top left
+                    (
+                        width * top_right_margin / 100.0,
+                        height * horizon / 100.0,
+                    ),  # Top right
+                    (
+                        width * right_margin / 100.0,
+                        height * bottom / 100.0,
+                    ),  # Bottom right
+                ]
+            ],
+            dtype=np.int32,
+        )
 
-            canny_image = canny_edge_detector(frame)
-            cropped_canny = region_of_interest(canny_image, vertices)
-            lines = detect_lines(cropped_canny)
-            combo_image = draw_lines(frame, lines, top_y, bottom_y)
+        canny_image = canny_edge_detector(frame)
+        cropped_canny = region_of_interest(canny_image, vertices)
+        lines = detect_lines(cropped_canny)
+        combo_image = draw_lines(frame, lines, top_y, bottom_y, offset_file)
 
-            # Draw the ROI only if HIDE_ROI is False
-            if not HIDE_ROI:
-                combo_image = draw_roi(combo_image, vertices)
+        # Draw the ROI only if HIDE_ROI is False
+        if not HIDE_ROI:
+            combo_image = draw_roi(combo_image, vertices)
 
-            cv2.imshow("result", combo_image)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                print(
-                    f"Final Horizon: {horizon}, Final Bottom: {bottom}, Left Margin: {left_margin}, Right Margin: {right_margin}, Top Left Margin: {top_left_margin}, Top Right Margin: {top_right_margin}"
-                )
-                print(
-                    "Replace the HORIZON, BOTTOM_TRIM, LEFT_MARGIN, and RIGHT_MARGIN constants with these values."
-                )
-                video_capture.release()
-                cv2.destroyAllWindows()
-                return  # Exit the function after printing the final values
+        cv2.imshow("result", combo_image)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            print("Exiting...")
+            print("File saved as:", unique_filename)
+            break
+
+    # Clean up
+    video_capture.release()
+    cv2.destroyAllWindows()
+    offset_file.close()
 
 
 if __name__ == "__main__":
