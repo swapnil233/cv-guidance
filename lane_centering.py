@@ -19,12 +19,12 @@ previous_time = datetime.datetime.now()
 # Define initial global constants for the region of interest (ROI)
 # INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest,
 # and then use the values on the trackbars to update the global constants below:
-HORIZON = 66
-BOTTOM_TRIM = 93
-LEFT_MARGIN = 26
-RIGHT_MARGIN = 74
-TOP_LEFT_MARGIN = 44
-TOP_RIGHT_MARGIN = 57
+HORIZON = 44
+BOTTOM_TRIM = 99
+LEFT_MARGIN = 17
+RIGHT_MARGIN = 80
+TOP_LEFT_MARGIN = 38
+TOP_RIGHT_MARGIN = 50
 
 # Input can either be a video on disk, or a live video stream from a USB camera
 # Video files are stored in the test_videos directory.
@@ -40,7 +40,7 @@ buffer_length = 2  # Determines how many frames to average over
 ROAD_WIDTH = 3.7  # meters
 
 # Set to True to hide the region of interest overlay
-HIDE_ROI = True
+HIDE_ROI = False
 
 
 # UI Utilities
@@ -218,6 +218,10 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
     meters_per_pixel = ROAD_WIDTH / (right_x_pos - left_x_pos)
     deviation_meters = deviation_pixels * meters_per_pixel
 
+    # Write the deviation to the offset file
+    print(f"Deviation: {deviation_meters:.2f} m")
+    offset_file.write(f"{deviation_meters}\n")
+
     deviation_direction = "right" if deviation_meters > 0 else "left"
     abs_deviation_meters = abs(deviation_meters)
 
@@ -313,8 +317,6 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
         cv2.LINE_AA,
     )
 
-    offset_file.write(f"{deviation_meters}\n")
-
     return img
 
 
@@ -378,6 +380,9 @@ def process_video(video_path):
         ret, frame = video_capture.read()
         if not ret:
             print("Reached the end of the video.")
+            print(
+                f"Final Horizon: {horizon}, Final Bottom: {bottom}, Left Margin: {left_margin}, Right Margin: {right_margin}, Top Left Margin: {top_left_margin}, Top Right Margin: {top_right_margin}"
+            )
             break  # Exit the loop if video end is reached
 
         (
@@ -432,6 +437,11 @@ def process_video(video_path):
         if cv2.waitKey(1) & 0xFF == ord("q"):
             print("Exiting...")
             print("File saved as:", unique_filename)
+
+            print(
+                f"Final Horizon: {horizon}, Final Bottom: {bottom}, Left Margin: {left_margin}, Right Margin: {right_margin}, Top Left Margin: {top_left_margin}, Top Right Margin: {top_right_margin}"
+            )
+
             break
 
     # Clean up
@@ -454,6 +464,6 @@ if __name__ == "__main__":
         "test_videos/test6.mp4",  # 8
     ]
     try:
-        process_video(video_paths[7])
+        process_video(video_paths[1])
     except Exception as e:
         print(f"Error processing video: {e}")
