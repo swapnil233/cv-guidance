@@ -251,6 +251,21 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
     print(f"Control Action: {control_action}")
     control_actions_file.write(f"{control_action}\n")
 
+    # Draw the control action arrow on the image at the bottom center
+    base_position = (
+        img.shape[1] // 2,
+        img.shape[0] - 30,
+    )
+    draw_control_action_arrow(
+        img,
+        control_action,
+        base_position,
+        scale=10000,
+        color=(255, 0, 0),  # Blue
+        thickness=4,
+        tip_length=0.2,
+    )
+
     if left_line_buffer:
         left_poly_avg = np.mean(left_line_buffer, axis=0)
         draw_poly_line(
@@ -377,6 +392,34 @@ def read_data_from_file(file_path):
         lines = file.readlines()
         data = [float(line.strip()) for line in lines]
     return data
+
+
+def draw_control_action_arrow(
+    img,
+    control_action,
+    base_position,
+    scale=1,
+    color=(0, 255, 0),
+    thickness=2,
+    tip_length=0.5,
+):
+    """
+    Draws an arrow representing the PID control action on the image.
+
+    Parameters:
+    - img: The image onto which to draw.
+    - control_action: The PID control action value.
+    - base_position: A tuple (x, y) representing the base position of the arrow on the image.
+    - scale: A scaling factor for the control action to adjust arrow length.
+    - color: The color of the arrow (B, G, R).
+    - thickness: The thickness of the arrow line.
+    - tip_length: The length of the arrow tip in relation to the arrow length.
+    """
+    end_x = int(base_position[0] + control_action * scale)
+    end_y = base_position[1]
+    cv2.arrowedLine(
+        img, base_position, (end_x, end_y), color, thickness, tipLength=tip_length
+    )
 
 
 # Video Processing
