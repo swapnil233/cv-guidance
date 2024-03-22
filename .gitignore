@@ -4,3 +4,6 @@ test_videos/dash1.mp4
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+
+# Offset values are stored as .txt files
+*.txt
