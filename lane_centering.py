@@ -281,6 +281,9 @@ def draw_lines(img, lines, top_y, bottom_y):
         cv2.LINE_AA,
     )
 
+    # Print the offset from the center
+    print(deviation_meters)
+
     return img
 
 
