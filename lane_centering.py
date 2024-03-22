@@ -2,6 +2,20 @@ import cv2
 import numpy as np
 import datetime
 
+from pid import PIDController
+import datetime
+
+pid_controller = PIDController(
+    kp=0.1,
+    ki=0.01,
+    kd=0.005,
+    integral_limit=100,
+    derivative_filter_tau=0.01,
+    setpoint_weights=(1, 0.1),
+)
+previous_time = datetime.datetime.now()
+
+
 # Define initial global constants for the region of interest (ROI)
 # INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest,
 # and then use the values on the trackbars to update the global constants below:
@@ -144,7 +158,7 @@ def detect_lines(masked_edges):
     )
 
 
-def draw_lines(img, lines, top_y, bottom_y, offset_file):
+def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
     """
     Draws lines on the image.
 
@@ -155,7 +169,7 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file):
     Returns:
     - Image with lines drawn.
     """
-    global left_line_buffer, right_line_buffer
+    global left_line_buffer, right_line_buffer, previous_time
 
     left_line_x = []
     left_line_y = []
@@ -206,6 +220,18 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file):
 
     deviation_direction = "right" if deviation_meters > 0 else "left"
     abs_deviation_meters = abs(deviation_meters)
+
+    # Within the loop, after calculating deviation_meters
+    current_time = datetime.datetime.now()
+    dt = (current_time - previous_time).total_seconds()
+    previous_time = current_time
+
+    # Assuming deviation_meters is the current value you want to correct with PID
+    control_action = pid_controller.update(deviation_meters, dt)
+
+    # For now, let's just print the control action to see the output
+    print(f"Control Action: {control_action}")
+    control_actions_file.write(f"{control_action}\n")
 
     if left_line_buffer:
         left_poly_avg = np.mean(left_line_buffer, axis=0)
@@ -342,6 +368,12 @@ def process_video(video_path):
     )
     offset_file = open(unique_filename, "w")
 
+    # Create a file to store the control actions
+    control_actions_filename = unique_filename.replace(
+        "_offsets.txt", "_control_actions.txt"
+    )
+    control_actions_file = open(control_actions_filename, "w")
+
     while True:
         ret, frame = video_capture.read()
         if not ret:
@@ -388,7 +420,9 @@ def process_video(video_path):
         canny_image = canny_edge_detector(frame)
         cropped_canny = region_of_interest(canny_image, vertices)
         lines = detect_lines(cropped_canny)
-        combo_image = draw_lines(frame, lines, top_y, bottom_y, offset_file)
+        combo_image = draw_lines(
+            frame, lines, top_y, bottom_y, offset_file, control_actions_file
+        )
 
         # Draw the ROI only if HIDE_ROI is False
         if not HIDE_ROI:
@@ -404,6 +438,7 @@ def process_video(video_path):
     video_capture.release()
     cv2.destroyAllWindows()
     offset_file.close()
+    control_actions_file.close()
 
 
 if __name__ == "__main__":
