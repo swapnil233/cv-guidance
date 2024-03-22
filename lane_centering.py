@@ -1,20 +1,9 @@
 import cv2
 import numpy as np
 import datetime
-
 from pid import PIDController
 import datetime
-
-pid_controller = PIDController(
-    kp=0.1,
-    ki=0.01,
-    kd=0.005,
-    integral_limit=100,
-    derivative_filter_tau=0.01,
-    setpoint_weights=(1, 0.1),
-)
-previous_time = datetime.datetime.now()
-
+import matplotlib.pyplot as plt
 
 # Define initial global constants for the region of interest (ROI)
 # INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest,
@@ -25,6 +14,18 @@ LEFT_MARGIN = 17
 RIGHT_MARGIN = 80
 TOP_LEFT_MARGIN = 38
 TOP_RIGHT_MARGIN = 50
+
+# PID Controller Constants
+KP = 0.1  # Proportional. This is used to correct for the current error.
+KI = 0.01  # Integral. This is used to correct for steady-state error.
+KD = 0.005  # Derivative. This is used to dampen the oscillations around the setpoint.
+INTEGRAL_LIMIT = 100  # Maximum value for the integral term. This is to prevent integral windup, which can cause the controller to overshoot.
+DERIVATE_FILTER_TAU = 0.01  # Time constant for the derivative filter. This is used to smooth out the derivative term.
+SETPOINT_WEIGHTS = (
+    1,
+    0.1,
+)  # Weights for the setpoint and derivative term. This is used to prioritize the setpoint over the derivative term.
+
 
 # Input can either be a video on disk, or a live video stream from a USB camera
 # Video files are stored in the test_videos directory.
@@ -41,6 +42,16 @@ ROAD_WIDTH = 3.7  # meters
 
 # Set to True to hide the region of interest overlay
 HIDE_ROI = False
+
+# Initialize the PID controller
+pid_controller = PIDController(
+    kp=KP,
+    ki=KI,
+    kd=KD,
+    integral_limit=INTEGRAL_LIMIT,
+    derivative_filter_tau=DERIVATE_FILTER_TAU,
+    setpoint_weights=(SETPOINT_WEIGHTS),
+)
 
 
 # UI Utilities
@@ -156,6 +167,9 @@ def detect_lines(masked_edges):
     return cv2.HoughLinesP(
         masked_edges, 1, np.pi / 180, 50, np.array([]), minLineLength=20, maxLineGap=150
     )
+
+
+previous_time = datetime.datetime.now()
 
 
 def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
@@ -349,6 +363,22 @@ def draw_poly_line(
     cv2.addWeighted(lines_overlay, alpha, img, 1 - alpha, 0, img)
 
 
+# Read data from a file
+def read_data_from_file(file_path):
+    """Reads data from a file and returns a list of floats.
+
+    Parameters:
+    - file_path: Path to the file.
+
+    Returns:
+    - List of floats.
+    """
+    with open(file_path, "r") as file:
+        lines = file.readlines()
+        data = [float(line.strip()) for line in lines]
+    return data
+
+
 # Video Processing
 def process_video(video_path):
     """
@@ -381,7 +411,14 @@ def process_video(video_path):
         if not ret:
             print("Reached the end of the video.")
             print(
-                f"Final Horizon: {horizon}, Final Bottom: {bottom}, Left Margin: {left_margin}, Right Margin: {right_margin}, Top Left Margin: {top_left_margin}, Top Right Margin: {top_right_margin}"
+                {
+                    "HORIZON": horizon,
+                    "BOTTOM_TRIM": bottom,
+                    "LEFT_MARGIN": left_margin,
+                    "RIGHT_MARGIN": right_margin,
+                    "TOP_LEFT_MARGIN": top_left_margin,
+                    "TOP_RIGHT_MARGIN": top_right_margin,
+                }
             )
             break  # Exit the loop if video end is reached
 
@@ -449,6 +486,44 @@ def process_video(video_path):
     cv2.destroyAllWindows()
     offset_file.close()
     control_actions_file.close()
+
+    # Read the deviation and control actions data
+    deviation_data = read_data_from_file(unique_filename)
+    control_actions_data = read_data_from_file(control_actions_filename)
+
+    fig, ax1 = plt.subplots()
+    ax1.set_xlabel("Frames")
+    ax1.set_ylabel("Deviation from Center (m)", color="tab:red")
+    ax1.plot(deviation_data, color="tab:red", label="Deviation")
+    ax1.tick_params(axis="y", labelcolor="tab:red")
+
+    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+    ax2.set_ylabel("Control Action", color="tab:blue")
+    ax2.plot(control_actions_data, color="tab:blue", label="Control Action")
+    ax2.tick_params(axis="y", labelcolor="tab:blue")
+
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.title("Deviation and Control Action Over Time")
+    plt.show()
+
+    # Plotting the deviation from center
+    plt.figure(figsize=(10, 5))
+    plt.plot(deviation_data, label="Deviation from Center")
+    plt.axhline(0, color="r", linestyle="--")
+    plt.xlabel("Frames")
+    plt.ylabel("Deviation (meters)")
+    plt.title("Deviation from Lane Center Over Time")
+    plt.legend()
+    plt.show()
+
+    # Plotting the control actions
+    plt.figure(figsize=(10, 5))
+    plt.plot(control_actions_data, label="Control Action")
+    plt.xlabel("Frames")
+    plt.ylabel("Control Action Value")
+    plt.title("PID Control Actions Over Time")
+    plt.legend()
+    plt.show()
 
 
 if __name__ == "__main__":
