@@ -5,15 +5,18 @@ from pid import PIDController
 import datetime
 import matplotlib.pyplot as plt
 
+# import RPi.GPIO as GPIO  # using Rpi.GPIO module. This only works on Raspberry Pi
+from time import sleep  # import function sleep for delay
+
 # Define initial global constants for the region of interest (ROI)
 # INSTRUCTIONS: run the script, adjust the trackbars to define the region of interest,
 # and then use the values on the trackbars to update the global constants below:
-HORIZON = 44
+HORIZON = 47
 BOTTOM_TRIM = 99
 LEFT_MARGIN = 17
-RIGHT_MARGIN = 80
-TOP_LEFT_MARGIN = 38
-TOP_RIGHT_MARGIN = 50
+RIGHT_MARGIN = 83
+TOP_LEFT_MARGIN = 39
+TOP_RIGHT_MARGIN = 51
 
 # PID Controller Constants
 KP = 0.1  # Proportional. This is used to correct for the current error.
@@ -32,16 +35,27 @@ SETPOINT_WEIGHTS = (
 # See the very bottom of the script for the list of available videos.
 VIDEO_OR_CAMERA = "video"  # "video" or "camera"
 
-# Initialize buffers for storing line coefficients
-left_line_buffer = []
-right_line_buffer = []
-buffer_length = 2  # Determines how many frames to average over
-
 # ROAD WIDTH
 ROAD_WIDTH = 3.7  # meters
 
 # Set to True to hide the region of interest overlay
-HIDE_ROI = False
+HIDE_ROI = True
+
+# Initialize buffers for storing line coefficients
+left_line_buffer = []
+right_line_buffer = []
+buffer_length = 10  # Determines how many frames to average over
+
+# # Motor control using GPIO
+# GPIO.setmode(GPIO.BCM)  # GPIO numbering
+# GPIO.setwarnings(False)  # enable warning from GPIO
+# AN1 = 12  # set pwm1 pin on MD10-hat
+# DIG1 = 26  # set dir1 pin on MD10-Hat
+# GPIO.setup(AN1, GPIO.OUT)  # set pin as output
+# GPIO.setup(DIG1, GPIO.OUT)  # set pin as output
+# sleep(1)  # delay for 1 seconds
+# p1 = GPIO.PWM(AN1, 100)  # set pwm for M1
+
 
 # Initialize the PID controller
 pid_controller = PIDController(
@@ -52,6 +66,17 @@ pid_controller = PIDController(
     derivative_filter_tau=DERIVATE_FILTER_TAU,
     setpoint_weights=(SETPOINT_WEIGHTS),
 )
+
+
+# def adjust_motor(control_action):
+#     # Assuming control_action > 0 means steer right, < 0 means steer left
+#     direction = GPIO.HIGH if control_action > 0 else GPIO.LOW
+
+#     # Convert control_action to speed, e.g., larger deviations => higher speed
+#     speed = min(abs(control_action) * 10, 100)  # Scale and limit speed to 100%
+
+#     GPIO.output(DIG1, direction)  # Set direction
+#     p1.start(speed)  # Set speed based on PID control action
 
 
 # UI Utilities
@@ -106,6 +131,7 @@ def canny_edge_detector(img):
     # Apply gaussian blur to reduce noise
     blur = cv2.GaussianBlur(lightness, (5, 5), 0)
     edges = cv2.Canny(blur, lower_threshold, upper_threshold)
+
     return edges
 
 
@@ -127,6 +153,9 @@ def region_of_interest(edges, vertices):
 
     # Apply the mask to the edge-detected image
     masked_edges = cv2.bitwise_and(edges, mask)
+
+    # cv2.imshow("roi", masked_edges)
+    # cv2.waitKey(0)
 
     return masked_edges
 
@@ -164,9 +193,14 @@ def detect_lines(masked_edges):
     Returns:
     - Lines detected in the image.
     """
-    return cv2.HoughLinesP(
+    detected_lines = cv2.HoughLinesP(
         masked_edges, 1, np.pi / 180, 50, np.array([]), minLineLength=20, maxLineGap=150
     )
+
+    # cv2.imshow("lines", masked_edges)
+    # cv2.waitKey(0)
+
+    return detected_lines
 
 
 previous_time = datetime.datetime.now()
@@ -226,9 +260,11 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
         right_poly = right_line_buffer[-1]
         right_x_pos = np.polyval(right_poly, bottom_y)
 
-    lane_center = (left_x_pos + right_x_pos) / 2
-    car_position = img.shape[1] / 2
-    deviation_pixels = car_position - lane_center
+    lane_center = (left_x_pos + right_x_pos) / 2  # This is the center of the lane
+    car_position = img.shape[1] / 2  # This is the center of the image
+    deviation_pixels = (
+        car_position - lane_center
+    )  # Positive if car is to the right of the lane center, negative otherwise
     meters_per_pixel = ROAD_WIDTH / (right_x_pos - left_x_pos)
     deviation_meters = deviation_pixels * meters_per_pixel
 
@@ -246,6 +282,7 @@ def draw_lines(img, lines, top_y, bottom_y, offset_file, control_actions_file):
 
     # Assuming deviation_meters is the current value you want to correct with PID
     control_action = pid_controller.update(deviation_meters, dt)
+    # adjust_motor(control_action)
 
     # For now, let's just print the control action to see the output
     print(f"Control Action: {control_action}")
@@ -380,17 +417,17 @@ def draw_poly_line(
 
 # Read data from a file
 def read_data_from_file(file_path):
-    """Reads data from a file and returns a list of floats.
+    """Reads data from a file and returns a list of floats without any occurrences of 2.0.
 
     Parameters:
     - file_path: Path to the file.
 
     Returns:
-    - List of floats.
+    - List of floats without any occurrences of 2.0.
     """
     with open(file_path, "r") as file:
         lines = file.readlines()
-        data = [float(line.strip()) for line in lines]
+        data = [float(line.strip()) for line in lines if float(line.strip()) != 2.0]
     return data
 
 
